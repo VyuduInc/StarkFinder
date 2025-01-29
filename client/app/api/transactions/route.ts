@@ -69,9 +69,39 @@ async function getTransactionIntentFromOpenAI(
     };
 
     const value = 10 ** 18;
-    const weiAmount = BigInt(intentData.extractedParams.amount * value);
+    
+    // Validate amount
+    const amount = parseFloat(intentData.extractedParams.amount);
+    if (isNaN(amount) || amount <= 0 || !isFinite(amount)) {
+      throw new Error('Invalid amount specified');
+    }
+    
+    // Validate addresses if present
+    if (intentData.extractedParams.address && !/^0x[a-fA-F0-9]{40,64}$/.test(intentData.extractedParams.address)) {
+      throw new Error('Invalid source address format');
+    }
+    if (intentData.extractedParams.destinationAddress && !/^0x[a-fA-F0-9]{40,64}$/.test(intentData.extractedParams.destinationAddress)) {
+      throw new Error('Invalid destination address format');
+    }
+
+    const weiAmount = BigInt(amount * value);
 
     switch (intentData.action) {
+      case "bridge":
+        intentResponse.data = {
+          description: intentData.data?.description || "Bridge tokens between chains",
+          steps: [],
+          bridge: {
+            sourceNetwork: intentData.extractedParams.chain || "",
+            destinationNetwork: intentData.extractedParams.dest_chain || intentData.extractedParams.destinationChain || "",
+            sourceToken: intentData.extractedParams.token1 || "",
+            destinationToken: intentData.extractedParams.token2 || intentData.extractedParams.token1 || "",
+            amount: parseFloat(intentData.extractedParams.amount) || 0,
+            sourceAddress: intentData.extractedParams.address || "",
+            destinationAddress: intentData.extractedParams.destinationAddress || intentData.extractedParams.address || "",
+          }
+        };
+        break;
       case "swap":
       case "transfer":
         intentResponse.data = {
@@ -110,23 +140,6 @@ async function getTransactionIntentFromOpenAI(
           receiver: intentData.extractedParams.address,
           amountToApprove: intentData.data?.amountToApprove,
           gasCostUSD: intentData.data?.gasCostUSD,
-        };
-        break;
-
-      case "bridge":
-        intentResponse.data = {
-          description: "",
-          steps: [],
-          bridge: {
-            sourceNetwork: intentData.extractedParams.chain || "",
-            destinationNetwork: intentData.extractedParams.dest_chain || "",
-            sourceToken: intentData.extractedParams.token1 || "",
-            destinationToken: intentData.extractedParams.token2 || "",
-            amount: parseFloat(intentData.extractedParams.amount || "0"),
-            sourceAddress: address,
-            destinationAddress:
-              intentData.extractedParams.destinationAddress || address,
-          },
         };
         break;
 
