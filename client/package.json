@@ -9,6 +9,9 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "jest",
+    "test:bridge": "jest tests/bridge.test.ts",
+    "test:watch": "jest --watch",
     "type-check": "tsc --noEmit",
     "setup-webhook": "ts-node scripts/tg-delete-webhook.ts",
     "delete-webhook": "ts-node scripts/tg-set-webhook.ts"
@@ -72,7 +75,6 @@
     "stream-http": "^3.2.0",
     "tailwind-merge": "^2.5.4",
     "tailwindcss-animate": "^1.0.7",
-    "ts-node": "^10.9.2",
     "tsc": "^2.0.4",
     "url": "^0.11.4",
     "uuid": "^11.0.3",
@@ -82,7 +84,8 @@
   },
   "devDependencies": {
     "@types/dotenv-safe": "^8.1.6",
-    "@types/node": "^20",
+    "@types/node": "^20.17.16",
+    "@types/puppeteer": "^5.4.7",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "concurrently": "^9.1.2",
@@ -90,7 +93,9 @@
     "eslint-config-next": "14.2.17",
     "postcss": "^8",
     "prisma": "^6.3.0",
+    "puppeteer": "^24.1.1",
     "tailwindcss": "^3.4.1",
+    "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
   },
   "description": "This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).",

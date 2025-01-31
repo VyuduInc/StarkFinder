@@ -6,9 +6,14 @@ export type TransactionAction =
   | "bridge";
 
 export interface TransactionStep {
-  contractAddress: string;
-  entrypoint: string;
-  calldata: string[];
+  type: string;
+  description: string;
+  status: 'pending' | 'completed' | 'failed';
+  url?: string;
+  error?: string;
+  contractAddress?: string;
+  entrypoint?: string;
+  calldata?: string[];
 }
 
 export interface BrianStep {
@@ -113,19 +118,21 @@ export interface LayerswapError {
 }
 
 export interface BridgeTransactionData {
-  sourceNetwork: string;
-  destinationNetwork: string;
-  sourceToken: string;
-  destinationToken: string;
-  amount: number;
-  sourceAddress: string;
-  destinationAddress: string;
+  sourceAddress?: string;
+  destinationAddress?: string;
+  sourceNetwork?: string;
+  destinationNetwork?: string;
+  sourceToken?: string;
+  destinationToken?: string;
+  amount?: number;
   depositActions?: TransactionStep[];
 }
 
 export interface BrianTransactionData {
-  description: string;
-  steps: BrianStep[];
+  type?: TransactionAction;
+  description?: string;
+  steps?: TransactionStep[];
+  bridge?: BridgeTransactionData;
   fromToken?: BrianToken;
   toToken?: BrianToken;
   fromAmount?: string;
@@ -134,7 +141,6 @@ export interface BrianTransactionData {
   amountToApprove?: string;
   gasCostUSD?: string;
   protocol?: string;
-  bridge?: BridgeTransactionData;
 }
 
 export interface BrianResponse {

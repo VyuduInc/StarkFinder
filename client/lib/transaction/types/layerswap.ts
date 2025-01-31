@@ -44,18 +44,58 @@ export interface LayerswapError {
 }
 
 export interface LayerswapErrorResponse {
-  errors: LayerswapError[];
+  status: number;
+  statusText: string;
+  error: string | { [key: string]: any };
+}
+
+export interface LayerswapSwapRequest {
+  source_network: string;
+  destination_network: string;
+  source_token: string;
+  destination_token: string;
+  amount: number;
+  source_address: string;
+  destination_address: string;
+}
+
+export interface LayerswapSwapResponse {
+  id: string;
+  created_date: string;
+  status: string;
+  source_network: string;
+  destination_network: string;
+  source_token: string;
+  destination_token: string;
+  amount: number;
+  source_address: string;
+  destination_address: string;
+  transaction_id?: string;
+  error?: string;
+}
+
+export interface LayerswapNetwork {
+  id: string;
+  display_name: string;
+  internal_name: string;
+  tokens: LayerswapToken[];
+  status: string;
+}
+
+export interface LayerswapToken {
+  asset: string;
+  decimals: number;
+  symbol: string;
+  network_internal_name: string;
 }
 
 export interface LayerswapRoutes {
-  source_networks: string[];
-  destination_networks: string[];
-  tokens: {
-    [network: string]: {
-      symbol: string;
-      decimals: number;
-      min_amount?: string;
-      max_amount?: string;
-    }[];
-  };
+  source_networks: LayerswapNetwork[];
+  destination_networks: LayerswapNetwork[];
+  routes: {
+    source_network: string;
+    destination_network: string;
+    source_tokens: string[];
+    destination_tokens: string[];
+  }[];
 }
