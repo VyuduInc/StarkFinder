@@ -10,6 +10,7 @@ import type {
   BrianResponse,
   BrianTransactionData,
   LayerswapErrorResponse,
+  LayerswapRoutes,
 } from "@/lib/transaction/types";
 import {
   TRANSACTION_INTENT_PROMPT,
@@ -50,48 +51,82 @@ function formatNetwork(network: string): string {
   return NETWORK_MAPPING[normalized] || `${normalized}_mainnet`;
 }
 
+async function getAvailableTokens(sourceNetwork: string, destinationNetwork: string): Promise<string[]> {
+  try {
+    const routes = await layerswapClient.getAvailableRoutes();
+    const route = routes.routes.find(
+      r => r.source_network === sourceNetwork && r.destination_network === destinationNetwork
+    );
+
+    if (!route) {
+      throw new Error(`No available route found for ${sourceNetwork} -> ${destinationNetwork}`);
+    }
+
+    // Return intersection of source and destination tokens
+    return route.source_tokens.filter(token => route.destination_tokens.includes(token));
+  } catch (error) {
+    console.error('Error fetching available tokens:', error);
+    return ['ETH']; // Default to ETH if we can't fetch tokens
+  }
+}
+
 async function getTransactionIntentFromOpenAI(
   prompt: string,
   address: string,
   chainId: string,
   messages: any[]
 ): Promise<BrianResponse> {
-  if (prompt.toLowerCase().includes('bridge')) {
-    try {
-      // Extract bridging details from the prompt using LLM
-      const chain = new LLMChain({
-        llm,
-        prompt: transactionIntentPromptTemplate,
-      });
+  try {
+    const lastMessage = messages[messages.length - 1];
+    const isSelectingToken = lastMessage?.content?.toLowerCase().includes('select coin');
 
-      const result = await chain.invoke({
-        prompt: `${TRANSACTION_INTENT_PROMPT}\n\nUser message: ${prompt}`,
-      });
-
-      const parsedResult = new StringOutputParser().parse(result.text);
+    // If user is selecting a token, get available tokens for the route
+    if (isSelectingToken) {
+      const sourceNetwork = formatNetwork('starknet');
+      const destinationNetwork = formatNetwork('base'); // Default to Base, can be changed based on user preference
+      const availableTokens = await getAvailableTokens(sourceNetwork, destinationNetwork);
       
-      // Return bridging intent
       return {
-        type: 'bridge',
-        data: {
-          bridge: {
-            sourceAddress: address,
-            destinationAddress: address,
-            sourceNetwork: formatNetwork(chainId),
-            destinationNetwork: '', // Will be extracted from prompt
-            amount: '', // Will be extracted from prompt
-            sourceToken: '', // Will be extracted from prompt
-            destinationToken: '', // Will be extracted from prompt
-          }
+        isTransactionIntent: true,
+        solver: "brian",
+        action: "bridge",
+        type: "write",
+        extractedParams: {
+          action: "bridge",
+          token1: "",
+          token2: "",
+          chain: "starknet",
+          dest_chain: "base",
+          amount: "",
+          protocol: "",
+          address: "",
+          destinationAddress: "",
         },
-        raw: parsedResult
+        data: {
+          description: `Available tokens for bridging:\n${availableTokens.join(', ')}\n\nPlease choose a token to bridge.`,
+          steps: [],
+        },
       };
-    } catch (error) {
-      console.error('Error processing bridge request:', error);
-      throw error;
     }
+
+    const formattedPrompt = TRANSACTION_INTENT_PROMPT.replace(
+      "{user_prompt}",
+      prompt
+    );
+
+    const response = await llm.invoke(formattedPrompt);
+    const responseText = response.content;
+
+    try {
+      return JSON.parse(responseText);
+    } catch (error) {
+      console.error("Error parsing OpenAI response:", error);
+      throw new Error("Failed to parse transaction intent");
+    }
+  } catch (error) {
+    console.error("Error getting transaction intent:", error);
+    throw error;
   }
-  throw new Error('Only bridge transactions are supported in documentation mode');
 }
 
 async function getOrCreateTransactionChat(userId: string) {
