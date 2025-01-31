@@ -4,10 +4,12 @@
 import { NextResponse, NextRequest } from "next/server";
 import { ChatOpenAI } from "@langchain/openai";
 import { transactionProcessor } from "@/lib/transaction";
+import { LayerswapClient } from "@/lib/layerswap/client";
 
 import type {
   BrianResponse,
   BrianTransactionData,
+  LayerswapErrorResponse,
 } from "@/lib/transaction/types";
 import {
   TRANSACTION_INTENT_PROMPT,
@@ -21,6 +23,23 @@ const llm = new ChatOpenAI({
   model: "gpt-4",
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+const layerswapClient = new LayerswapClient(process.env.LAYERSWAP_API_KEY || '');
+
+// Network mapping for common names to Layerswap format
+const NETWORK_MAPPING: Record<string, string> = {
+  starknet: "starknet_mainnet",
+  ethereum: "ethereum_mainnet",
+  base: "base_mainnet",
+  arbitrum: "arbitrum_mainnet",
+  optimism: "optimism_mainnet",
+  polygon: "polygon_mainnet",
+};
+
+function formatNetwork(network: string): string {
+  const normalized = network.toLowerCase();
+  return NETWORK_MAPPING[normalized] || `${normalized}_mainnet`;
+}
 
 async function getTransactionIntentFromOpenAI(
   prompt: string,
@@ -88,20 +107,84 @@ async function getTransactionIntentFromOpenAI(
 
     switch (intentData.action) {
       case "bridge":
-        intentResponse.data = {
-          description: intentData.data?.description || "Bridge tokens between chains",
-          steps: [],
-          bridge: {
-            sourceNetwork: intentData.extractedParams.chain || "",
-            destinationNetwork: intentData.extractedParams.dest_chain || intentData.extractedParams.destinationChain || "",
-            sourceToken: intentData.extractedParams.token1 || "",
-            destinationToken: intentData.extractedParams.token2 || intentData.extractedParams.token1 || "",
-            amount: parseFloat(intentData.extractedParams.amount) || 0,
-            sourceAddress: intentData.extractedParams.address || "",
-            destinationAddress: intentData.extractedParams.destinationAddress || intentData.extractedParams.address || "",
-          }
+        // Format networks to match Layerswap expectations
+        const sourceNetwork = formatNetwork(intentData.extractedParams.chain || "starknet");
+        const destinationNetwork = formatNetwork(
+          intentData.extractedParams.dest_chain || 
+          intentData.extractedParams.destinationChain || 
+          "ethereum"
+        );
+
+        // Validate tokens
+        const sourceToken = intentData.extractedParams.token1?.toUpperCase();
+        const destinationToken = (intentData.extractedParams.token2 || intentData.extractedParams.token1)?.toUpperCase();
+        
+        if (!sourceToken || !destinationToken) {
+          throw new Error("Source and destination tokens are required for bridging");
+        }
+
+        // Validate addresses
+        const sourceAddress = intentData.extractedParams.address || address;
+        const destinationAddress = intentData.extractedParams.destinationAddress || 
+                                 intentData.extractedParams.address || 
+                                 address;
+
+        if (!/^0x[a-fA-F0-9]{40,64}$/.test(destinationAddress)) {
+          throw new Error("Invalid destination address format");
+        }
+
+        // Validate amount
+        const bridgeAmount = parseFloat(intentData.extractedParams.amount);
+        if (isNaN(bridgeAmount) || bridgeAmount <= 0) {
+          throw new Error("Invalid bridge amount");
+        }
+
+        // Check minimum bridge amount
+        const minBridgeAmount = parseFloat(process.env.NEXT_PUBLIC_MIN_BRIDGE_AMOUNT || "0.01");
+        const maxBridgeAmount = parseFloat(process.env.NEXT_PUBLIC_MAX_BRIDGE_AMOUNT || "1000");
+        
+        if (bridgeAmount < minBridgeAmount) {
+          throw new Error(`Bridge amount must be at least ${minBridgeAmount}`);
+        }
+        if (bridgeAmount > maxBridgeAmount) {
+          throw new Error(`Bridge amount cannot exceed ${maxBridgeAmount}`);
+        }
+
+        // Create bridge request data
+        const bridgeRequest = {
+          sourceNetwork,
+          destinationNetwork,
+          sourceToken,
+          destinationToken,
+          amount: bridgeAmount,
+          sourceAddress,
+          destinationAddress,
         };
+
+        try {
+          // Validate route with Layerswap
+          await layerswapClient.getAvailableRoutes();
+          
+          // Set bridge data
+          intentResponse.data = {
+            description: `Bridge ${bridgeAmount} ${sourceToken} from ${sourceNetwork} to ${destinationNetwork}`,
+            steps: [],
+            bridge: bridgeRequest
+          };
+        } catch (error) {
+          if (error instanceof Error) {
+            if (error.message?.includes("ROUTE_NOT_FOUND_ERROR")) {
+              throw new Error(
+                `Bridge route not available from ${sourceToken} on ${sourceNetwork} to ${destinationToken} on ${destinationNetwork}. ` +
+                "Consider bridging through an intermediate token like ETH."
+              );
+            }
+            throw error;
+          }
+          throw new Error("Failed to validate bridge route");
+        }
         break;
+
       case "swap":
       case "transfer":
         intentResponse.data = {
@@ -223,119 +306,66 @@ async function storeMessage({
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { prompt, address, messages = [], chainId = "4012" } = body;
+    const { prompt, address, chainId, messages, userId } = await request.json();
 
-    if (!prompt || !address) {
-      return NextResponse.json(
-        { error: "Missing required parameters (prompt or address)" },
-        { status: 400 }
-      );
-    }
+    // Get transaction intent
+    const intentResponse = await getTransactionIntentFromOpenAI(
+      prompt,
+      address,
+      chainId,
+      messages
+    );
 
-    let user = await prisma.user.findFirst({
-      where: { address },
-    })
-
-    if (!user) {
-      user = await prisma.user.create({
-        data: { address },
-      })
-    }
-
-    const chat = await getOrCreateTransactionChat(user.id)
-
+    // Process transaction based on intent
     try {
-      const transactionIntent = await getTransactionIntentFromOpenAI(
+      const result = await transactionProcessor.process(intentResponse);
+
+      // Store transaction in database
+      const txType = intentResponse.action.toUpperCase() as TxType;
+      const transaction = await storeTransaction(userId, txType, {
         prompt,
-        address,
-        chainId,
-        messages
-      );
+        intent: intentResponse,
+        result,
+      });
 
+      // Get or create chat
+      const chat = await getOrCreateTransactionChat(userId);
+
+      // Store messages
       await storeMessage({
-        content: [{ role: "user", content: prompt }],
+        content: messages,
         chatId: chat.id,
-        userId: user.id,
-      })
-
-      console.log(
-        "Processed Transaction Intent from OPENAI:",
-        JSON.stringify(transactionIntent, null, 2)
-      );
-
-      const processedTx = await transactionProcessor.processTransaction(
-        transactionIntent
-      );
-      console.log(
-        "Processed Transaction:",
-        JSON.stringify(processedTx, null, 2)
-      );
-
-      if (["deposit", "withdraw"].includes(transactionIntent.action)) {
-        processedTx.receiver = address;
-      }
-
-      const transaction = await storeTransaction(user.id, transactionIntent.action, {
-        ...processedTx,
-        chainId,
-        originalIntent: transactionIntent,
-      })
-
-      await storeMessage({
-        content: [
-          {
-            role: "assistant",
-            content: JSON.stringify(processedTx),
-            transactionId: transaction.id,
-          },
-        ],
-        chatId: chat.id,
-        userId: user.id,
-      })
+        userId,
+      });
 
       return NextResponse.json({
-        result: [
-          {
-            data: {
-              description: processedTx.description,
-              transaction: {
-                type: processedTx.action,
-                data: {
-                  transactions: processedTx.transactions,
-                  fromToken: processedTx.fromToken,
-                  toToken: processedTx.toToken,
-                  fromAmount: processedTx.fromAmount,
-                  toAmount: processedTx.toAmount,
-                  receiver: processedTx.receiver,
-                  gasCostUSD: processedTx.estimatedGas,
-                  solver: processedTx.solver,
-                  protocol: processedTx.protocol,
-                  bridge: processedTx.bridge,
-                },
-              },
-            },
-            conversationHistory: messages,
-          },
-        ],
+        success: true,
+        data: result,
+        transaction,
       });
     } catch (error) {
-      console.error("Transaction processing error:", error);
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Transaction processing failed",
-          details: error instanceof Error ? error.stack : undefined,
-        },
-        { status: 400 }
-      );
+      if (error instanceof Error) {
+        // Handle Layerswap specific errors
+        if (error.message?.includes("ROUTE_NOT_FOUND_ERROR")) {
+          return NextResponse.json({
+            success: false,
+            error: "Bridge route not available. Try a different token or network.",
+          }, { status: 400 });
+        }
+        if (error.message?.includes("INSUFFICIENT_LIQUIDITY")) {
+          return NextResponse.json({
+            success: false,
+            error: "Insufficient liquidity for bridge. Try a smaller amount or wait.",
+          }, { status: 400 });
+        }
+      }
+      
+      throw error;
     }
   } catch (error) {
-    console.error("Request processing error:", error);
+    console.error("Transaction processing error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { success: false, error: "Failed to process transaction" },
       { status: 500 }
     );
   }
