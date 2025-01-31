@@ -3,7 +3,7 @@ import { BaseTransactionHandler } from './base';
 import { LayerswapClient } from '../../layerswap/client';
 import { BrianTransactionData } from '../types';
 import { TransactionStep } from '../types';
-import { LayerswapSwapResponse } from '../types/layerswap';
+import { LayerswapSwapResponse, LayerswapRoutes } from '../types/layerswap';
 
 export class BridgeHandler extends BaseTransactionHandler {
   private readonly NETWORK_MAPPING: Record<string, string> = {
@@ -20,6 +20,7 @@ export class BridgeHandler extends BaseTransactionHandler {
   } as const;
 
   private layerswapClient: LayerswapClient;
+  private availableRoutes: LayerswapRoutes | null = null;
 
   constructor(apiKey: string) {
     super();
@@ -37,14 +38,34 @@ export class BridgeHandler extends BaseTransactionHandler {
     return mappedNetwork;
   }
 
-  private validateTokens(sourceToken?: string, destinationToken?: string): void {
+  private async getAvailableTokens(sourceNetwork: string, destinationNetwork: string): Promise<string[]> {
+    if (!this.availableRoutes) {
+      this.availableRoutes = await this.layerswapClient.getAvailableRoutes();
+    }
+
+    const route = this.availableRoutes.routes.find(
+      r => r.source_network === sourceNetwork && r.destination_network === destinationNetwork
+    );
+
+    if (!route) {
+      throw new Error(`No available route found for ${sourceNetwork} -> ${destinationNetwork}`);
+    }
+
+    // Return intersection of source and destination tokens
+    return route.source_tokens.filter(token => route.destination_tokens.includes(token));
+  }
+
+  private async validateTokens(sourceNetwork: string, destinationNetwork: string, sourceToken?: string, destinationToken?: string): Promise<void> {
     if (!sourceToken || !destinationToken) {
       throw new Error('Source and destination tokens are required');
     }
 
-    // Currently only supporting ETH bridging
-    if (sourceToken.toUpperCase() !== 'ETH' || destinationToken.toUpperCase() !== 'ETH') {
-      throw new Error('Only ETH bridging is supported at this time');
+    const availableTokens = await this.getAvailableTokens(sourceNetwork, destinationNetwork);
+    const normalizedSourceToken = sourceToken.toUpperCase();
+    const normalizedDestToken = destinationToken.toUpperCase();
+
+    if (!availableTokens.includes(normalizedSourceToken) || !availableTokens.includes(normalizedDestToken)) {
+      throw new Error(`Token pair ${sourceToken}->${destinationToken} not supported for this route. Available tokens: ${availableTokens.join(', ')}`);
     }
   }
 
@@ -84,10 +105,17 @@ export class BridgeHandler extends BaseTransactionHandler {
       const sourceNetwork = this.formatNetwork(params?.chain || "starknet");
       const destinationNetwork = this.formatNetwork(params?.dest_chain || "base");
       
+      // Get available tokens and validate
+      const availableTokens = await this.getAvailableTokens(sourceNetwork, destinationNetwork);
+      console.log(`Available tokens for ${sourceNetwork}->${destinationNetwork}:`, availableTokens);
+
+      // Default to ETH if available, otherwise use first available token
+      const defaultToken = availableTokens.includes('ETH') ? 'ETH' : availableTokens[0];
+      const sourceToken = (params?.token1 || defaultToken).toUpperCase();
+      const destinationToken = (params?.token2 || defaultToken).toUpperCase();
+
       // Validate tokens
-      this.validateTokens(params?.token1, params?.token2);
-      const sourceToken = params.token1.toUpperCase();
-      const destinationToken = params.token2.toUpperCase();
+      await this.validateTokens(sourceNetwork, destinationNetwork, sourceToken, destinationToken);
 
       // Extract and validate addresses
       const sourceAddress = data.bridge?.sourceAddress || params?.address;
@@ -105,38 +133,19 @@ export class BridgeHandler extends BaseTransactionHandler {
         destinationToken,
         amount,
         sourceAddress,
-        destinationAddress
+        destinationAddress,
       });
 
-      // Create transaction steps
-      const steps: TransactionStep[] = [
+      return [
         {
-          type: 'bridge_initiate',
-          description: `Initiating bridge from ${sourceNetwork} to ${destinationNetwork}`,
-          status: 'pending'
-        }
+          type: 'bridge',
+          status: 'success',
+          message: `Bridge transaction created from ${sourceNetwork} to ${destinationNetwork}`,
+          data: response,
+          url: `https://www.layerswap.io/track/${response.id}`,
+        },
       ];
-
-      if (response.transaction_id) {
-        steps.push({
-          type: 'bridge_transaction',
-          description: `Bridge transaction created with ID: ${response.transaction_id}`,
-          status: 'completed',
-          url: `https://layerswap.io/track/${response.id}`
-        });
-      }
-
-      if (response.error) {
-        steps.push({
-          type: 'bridge_error',
-          description: `Bridge error: ${response.error}`,
-          status: 'failed',
-          error: response.error
-        });
-      }
-
-      return steps;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Bridge error:', error);
       throw error;
     }
