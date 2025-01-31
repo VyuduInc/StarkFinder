@@ -175,6 +175,59 @@ NEXT_PUBLIC_MAX_BRIDGE_AMOUNT="1000"
 NEXT_PUBLIC_DEFAULT_BRIDGE_TOKEN="ETH"
 ```
 
+## Bridging Documentation
+
+StarkFinder is a comprehensive DeFi tool for Starknet that enables users to easily perform transfers, swaps, deposits, withdrawals, and now bridging between networks.
+
+### Features
+
+- Transfer tokens between Starknet addresses
+- Swap tokens on Starknet
+- Deposit tokens to Starknet
+- Withdraw tokens from Starknet
+- Bridge tokens between networks (NEW!)
+
+### Bridging Functionality
+
+StarkFinder now supports bridging tokens between networks using Layerswap. Here's an example of bridging ETH from Starknet to Ethereum:
+
+#### Steps to Bridge
+
+1. Connect your wallet
+2. Click "Bridge" in the main navigation
+3. Select source network (e.g., Starknet)
+4. Select destination network (e.g., Ethereum)
+5. Enter the amount to bridge
+6. Review and confirm the transaction
+
+#### Example Bridge Transaction
+
+**Transaction Details:**
+- From: Starknet
+- To: Ethereum
+- Token: ETH
+- Amount: 0.05 ETH
+- Transaction URL: https://www.layerswap.io/track/123456
+
+**Screenshots:**
+- [Bridge Interface](docs/screenshots/bridge-interface.png)
+- [Transaction Status](docs/screenshots/bridge-status.png)
+
+#### Supported Networks
+
+- Starknet (Mainnet)
+- Ethereum (Mainnet)
+- Base
+- Arbitrum
+- Optimism
+- Polygon
+
+#### Supported Tokens
+
+- ETH
+- USDC
+- USDT
+
 ## Design
 
 ### Landing Page

@@ -23,7 +23,7 @@ export class BridgeHandler extends BaseTransactionHandler {
   constructor(apiKey: string) {
     super();
     if (!apiKey) {
-      throw new Error('Layerswap API key is required');
+      throw new Error('Layerswap API key is required for bridging');
     }
     this.layerswapClient = new LayerswapClient(apiKey);
   }
