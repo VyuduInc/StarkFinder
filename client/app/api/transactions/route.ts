@@ -9,8 +9,8 @@ import { LayerswapClient } from "@/lib/layerswap/client";
 import type {
   BrianResponse,
   BrianTransactionData,
+  LayerswapSuccessResponse,
   LayerswapErrorResponse,
-  LayerswapRoutes,
 } from "@/lib/transaction/types";
 import {
   TRANSACTION_INTENT_PROMPT,
@@ -67,6 +67,29 @@ async function getAvailableTokens(sourceNetwork: string, destinationNetwork: str
   } catch (error) {
     console.error('Error fetching available tokens:', error);
     return ['ETH']; // Default to ETH if we can't fetch tokens
+  }
+}
+
+async function processBridgeTransaction(bridgeData: BrianTransactionData['bridge']): Promise<LayerswapSuccessResponse> {
+  if (!bridgeData) {
+    throw new Error('Bridge data is required');
+  }
+
+  try {
+    const response = await layerswapClient.createSwap({
+      sourceNetwork: formatNetwork(bridgeData.sourceNetwork),
+      destinationNetwork: formatNetwork(bridgeData.destinationNetwork),
+      sourceToken: bridgeData.sourceToken,
+      destinationToken: bridgeData.destinationToken,
+      amount: bridgeData.amount,
+      sourceAddress: bridgeData.sourceAddress,
+      destinationAddress: bridgeData.destinationAddress,
+    });
+
+    return response;
+  } catch (error) {
+    console.error('Error processing bridge transaction:', error);
+    throw error;
   }
 }
 
@@ -186,103 +209,131 @@ async function storeMessage({
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, userId, type, params } = await request.json();
-    const lastMessage = messages[messages.length - 1];
+    const body = await request.json();
+    const { prompt, address, chainId, messages, userId, type, fromAmount, fromCoin, toCoin } = body;
 
-    // Get or create chat
-    const chat = await getOrCreateTransactionChat(userId);
-    if (!chat) {
-      throw new Error("Failed to create or retrieve chat");
+    if (!userId) {
+      return NextResponse.json(
+        { error: "User ID is required" },
+        { status: 400 }
+      );
     }
 
-    // Store the user's message
+    const chat = await getOrCreateTransactionChat(userId);
+
+    if (type === "bridge") {
+      if (!fromAmount || !fromCoin || !toCoin) {
+        return NextResponse.json(
+          { error: "Missing required transaction parameters" },
+          { status: 400 }
+        );
+      }
+
+      // Validate networks for bridging
+      if (fromCoin.network === toCoin.network) {
+        return NextResponse.json(
+          { error: "Cannot bridge between the same network" },
+          { status: 400 }
+        );
+      }
+
+      // Validate supported networks
+      const supportedNetworks = ["sepolia", "starknet_sepolia"];
+      if (!supportedNetworks.includes(fromCoin.network) || !supportedNetworks.includes(toCoin.network)) {
+        return NextResponse.json(
+          { error: "Unsupported network for bridging" },
+          { status: 400 }
+        );
+      }
+
+      // Initialize Layerswap client and create bridge transaction
+      const layerswapClient = new LayerswapClient();
+      const bridgeResponse = await layerswapClient.createBridgeTransaction({
+        fromNetwork: fromCoin.network,
+        toNetwork: toCoin.network,
+        fromToken: fromCoin.symbol,
+        toToken: toCoin.symbol,
+        amount: fromAmount
+      });
+
+      // Store the bridge transaction
+      await storeTransaction(userId, 'BRIDGE', {
+        sourceNetwork: fromCoin.network,
+        destinationNetwork: toCoin.network,
+        sourceToken: fromCoin.symbol,
+        destinationToken: toCoin.symbol,
+        amount: fromAmount,
+        layerswapId: bridgeResponse.data.id,
+        status: bridgeResponse.data.status,
+      });
+
+      // Store the message
+      await storeMessage({
+        content: messages,
+        chatId: chat.id,
+        userId,
+      });
+
+      return NextResponse.json({
+        success: true,
+        action: 'bridge',
+        data: bridgeResponse.data,
+      });
+    }
+
+    // For other transaction types
+    const intentResponse = await getTransactionIntentFromOpenAI(
+      prompt,
+      address,
+      chainId,
+      messages
+    );
+
+    const result = await transactionProcessor.processTransaction(
+      intentResponse.data,
+      {
+        chain: intentResponse.extractedParams.chain,
+        dest_chain: intentResponse.extractedParams.dest_chain,
+        amount: intentResponse.extractedParams.amount,
+        token1: intentResponse.extractedParams.token1,
+        token2: intentResponse.extractedParams.token2,
+        protocol: intentResponse.extractedParams.protocol,
+        address: intentResponse.extractedParams.address,
+        destinationAddress: intentResponse.extractedParams.destinationAddress,
+      }
+    );
+
+    // Store the transaction
+    await storeTransaction(userId, intentResponse.action as TxType, {
+      ...intentResponse.data,
+      ...{
+        chain: intentResponse.extractedParams.chain,
+        dest_chain: intentResponse.extractedParams.dest_chain,
+        amount: intentResponse.extractedParams.amount,
+        token1: intentResponse.extractedParams.token1,
+        token2: intentResponse.extractedParams.token2,
+        protocol: intentResponse.extractedParams.protocol,
+        address: intentResponse.extractedParams.address,
+        destinationAddress: intentResponse.extractedParams.destinationAddress,
+      },
+      status: "completed",
+    });
+
+    // Store the message
     await storeMessage({
       content: messages,
       chatId: chat.id,
       userId,
     });
 
-    // Process transaction based on type
-    if (type === "bridge") {
-      try {
-        // Validate required parameters
-        if (!params.chain || !params.dest_chain || !params.amount || !params.address) {
-          throw new Error("Missing required parameters for bridge transaction");
-        }
-
-        // Create transaction data
-        const transactionData: BrianTransactionData = {
-          type: "bridge",
-          bridge: {
-            sourceAddress: params.address,
-            destinationAddress: params.address,
-          }
-        };
-
-        // Process the transaction
-        const result = await transactionProcessor.processTransaction(
-          transactionData,
-          params
-        );
-
-        // Store the transaction
-        await storeTransaction(userId, "bridge", {
-          sourceChain: params.chain,
-          destinationChain: params.dest_chain,
-          amount: params.amount,
-          token: params.token1,
-          address: params.address,
-          status: "completed",
-        });
-
-        return NextResponse.json({
-          success: true,
-          data: result
-        });
-      } catch (error: any) {
-        console.error("Bridge transaction error:", error);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: error.message || "Failed to process bridge transaction" 
-          },
-          { status: 400 }
-        );
-      }
-    }
-
-    // For other transaction types, get intent from OpenAI
-    const transactionIntent = await getTransactionIntentFromOpenAI(
-      lastMessage.content,
-      params?.address || "",
-      params?.chain || "",
-      messages
-    );
-
-    // Process the transaction
-    const result = await transactionProcessor.processTransaction(
-      transactionIntent.data,
-      params
-    );
-
-    // Store the transaction
-    await storeTransaction(userId, transactionIntent.data.type || "unknown", {
-      ...transactionIntent.data,
-      ...params,
-      status: "completed",
-    });
-
     return NextResponse.json({
       success: true,
       data: result
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error processing transaction:", error);
     return NextResponse.json(
-      { 
-        success: false, 
-        error: error.message || "Failed to process transaction" 
-      },
+      { error: "Failed to process transaction" },
       { status: 500 }
     );
   }

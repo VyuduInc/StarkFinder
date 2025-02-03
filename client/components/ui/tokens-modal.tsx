@@ -1,5 +1,6 @@
 import React from "react";
 import Image from "next/image";
+import { X } from "react-feather";
 import { CryptoCoin } from "@/types/crypto-coin";
 
 type TokensModalProps = {
@@ -8,50 +9,52 @@ type TokensModalProps = {
   setShowModal: (show: boolean) => void;
 };
 
-function TokensModal({
+const TokensModal: React.FC<TokensModalProps> = ({
   blockchain_logo,
   handleCoinSelect,
   setShowModal,
-}: TokensModalProps) {
+}) => {
   return (
-    <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center animated fadeIn">
-      <div className="bg-white p-6 max-w-lg w-full shadow-lg rounded-xl animated fadeIn">
-        <h3 className={`text-lg font-bold text-center mb-4 text-black`}>
-          Select Coin
-        </h3>
-        <ul
-          className="h-[16.7rem] overflow-y-auto  
-              [&::-webkit-scrollbar]:w-2
-              [&::-webkit-scrollbar-track]:bg-[#eee]
-              [&::-webkit-scrollbar-thumb]:bg-[#ddd]
-              [&::-webkit-scrollbar-thumb]:rounded-full
-              dark:[&::-webkit-scrollbar-track]:bg-neutral-700
-              dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500"
-        >
-          {blockchain_logo.map((coin: CryptoCoin, index: number) => (
-            <li
-              key={index}
-              className="flex items-center justify-between p-2 cursor-pointer hover:bg-gray-100 rounded-lg mb-2"
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black opacity-50"></div>
+      <div className="relative bg-white rounded-lg w-96 max-h-[80vh] overflow-y-auto">
+        <div className="flex justify-between items-center p-4 border-b">
+          <h2 className="text-lg font-semibold">Select Token</h2>
+          <button
+            onClick={() => setShowModal(false)}
+            className="text-gray-500 hover:text-gray-700"
+          >
+            <X size={24} />
+          </button>
+        </div>
+        <div className="p-4">
+          {blockchain_logo.map((coin, index) => (
+            <div
+              key={`${coin.symbol}-${coin.network}-${index}`}
               onClick={() => handleCoinSelect(coin)}
+              className="flex items-center p-3 hover:bg-gray-100 rounded-lg cursor-pointer"
             >
-              <div className="flex items-center space-x-2">
-                <Image src={coin.logo} alt={coin.name} width={30} height={30} />
-                <span className="text-lg font-bold text-black">
-                  {coin.name}
-                </span>
+              <div className="w-8 h-8 mr-3">
+                <Image
+                  src={coin.logo}
+                  alt={coin.name}
+                  width={32}
+                  height={32}
+                  className="rounded-full"
+                />
               </div>
-            </li>
+              <div>
+                <div className="font-medium">{coin.symbol}</div>
+                <div className="text-sm text-gray-500">
+                  {coin.network === "sepolia" ? "Ethereum Sepolia" : "StarkNet Sepolia"}
+                </div>
+              </div>
+            </div>
           ))}
-        </ul>
-        <button
-          className={`mt-4 bg-[#060606] text-white py-3 rounded-[40px] w-full`}
-          onClick={() => setShowModal(false)}
-        >
-          Cancel
-        </button>
+        </div>
       </div>
     </div>
   );
-}
+};
 
 export default TokensModal;
