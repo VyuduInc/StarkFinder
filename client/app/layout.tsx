@@ -6,7 +6,6 @@ import { StarknetProvider } from "@/lib/StarknetProvider";
 import Script from "next/script";
 import { Analytics } from "@vercel/analytics/react";
 
-
 export const metadata: Metadata = {
 title: "Stark Finder",
 description: "The only platform you need for all things Starknet. Discover and interact with Starknet applications effortlessly",
@@ -26,9 +25,7 @@ export default function RootLayout({
           strategy="beforeInteractive"
         />
       </head>
-      <body
-        className={`antialiased`}
-      >
+      <body className={`antialiased`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
