@@ -17,7 +17,7 @@ function TokensModal({
     <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center animated fadeIn">
       <div className="bg-white p-6 max-w-lg w-full shadow-lg rounded-xl animated fadeIn">
         <h3 className={`text-lg font-bold text-center mb-4 text-black`}>
-          Select Coin
+          Select Network
         </h3>
         <ul
           className="h-[16.7rem] overflow-y-auto  
@@ -35,10 +35,21 @@ function TokensModal({
               onClick={() => handleCoinSelect(coin)}
             >
               <div className="flex items-center space-x-2">
-                <Image src={coin.logo} alt={coin.name} width={30} height={30} />
-                <span className="text-lg font-bold text-black">
-                  {coin.name}
-                </span>
+                <Image 
+                  src={coin.logo} 
+                  alt={coin.name} 
+                  width={30} 
+                  height={30}
+                  className="rounded-full"
+                />
+                <div className="flex flex-col">
+                  <span className="text-lg font-bold text-black">
+                    {coin.symbol} on {coin.network.split('_')[0].toUpperCase()}
+                  </span>
+                  <span className="text-sm text-gray-500">
+                    Network: {coin.network.split('_')[1].toUpperCase()}
+                  </span>
+                </div>
               </div>
             </li>
           ))}

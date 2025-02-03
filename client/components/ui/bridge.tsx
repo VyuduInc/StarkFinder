@@ -29,49 +29,39 @@ const Bridge: React.FC<BridgeProps> = ({ setSelectedCommand }) => {
   useEffect(() => {
     const fetchAvailableTokens = async () => {
       try {
-        const response = await fetch('/api/transactions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+        // Define supported tokens for bridging
+        const supportedTokens: CryptoCoin[] = [
+          {
+            name: "ETH",
+            symbol: "ETH",
+            logo: "https://ethereum.org/static/6b935ac0e6194247347855dc3d328e83/6ed5f/eth-diamond-black.webp",
+            network: "sepolia",
+            chainId: "11155111",
+            decimals: 18
           },
-          body: JSON.stringify({
-            prompt: 'select coin',
-            address: address,
-            chainId: '4012',
-            messages: [{ sender: 'user', content: 'select coin' }],
-          }),
-        });
-
-        const data = await response.json();
-        if (data.result?.[0]?.data?.description) {
-          const tokenList = data.result[0].data.description
-            .split('\n')[0] // Get first line which contains the token list
-            .replace('Available tokens for bridging:', '')
-            .split(',')
-            .map(token => token.trim())
-            .filter(Boolean);
-
-          // Convert token symbols to CryptoCoin objects
-          const availableCoins = CoinsLogo.filter(coin => 
-            tokenList.includes(coin.symbol)
-          );
-
-          setAvailableTokens(availableCoins);
-          if (availableCoins.length > 0) {
-            setFromCoin(availableCoins[0]);
-            setToCoin(availableCoins[0]);
+          {
+            name: "ETH",
+            symbol: "ETH",
+            logo: "https://pbs.twimg.com/profile_images/1656626805816565763/WyFDMG6u_400x400.png",
+            network: "starknet_sepolia",
+            chainId: "SN_SEPOLIA",
+            decimals: 18
           }
+        ];
+
+        setAvailableTokens(supportedTokens);
+        if (supportedTokens.length > 0) {
+          setFromCoin(supportedTokens[0]); // ETH on Sepolia
+          setToCoin(supportedTokens[1]);   // ETH on StarkNet Sepolia
         }
       } catch (error) {
-        console.error('Error fetching available tokens:', error);
-        setError('Failed to fetch available tokens');
+        console.error('Error setting up available tokens:', error);
+        setError('Failed to setup available tokens. Please try again.');
       }
     };
 
-    if (address) {
-      fetchAvailableTokens();
-    }
-  }, [address]);
+    fetchAvailableTokens();
+  }, []);
 
   const openModal = (type: "from" | "to") => {
     setSelectingCoinFor(type);
@@ -80,11 +70,20 @@ const Bridge: React.FC<BridgeProps> = ({ setSelectedCommand }) => {
 
   const handleCoinSelect = (coin: CryptoCoin) => {
     if (selectingCoinFor === "from") {
+      if (coin.network === toCoin.network) {
+        setError("Source and destination networks cannot be the same");
+        return;
+      }
       setFromCoin(coin);
     } else {
+      if (coin.network === fromCoin.network) {
+        setError("Source and destination networks cannot be the same");
+        return;
+      }
       setToCoin(coin);
     }
     setShowModal(false);
+    setError(null);
   };
 
   const handleInputBridge = () => {
@@ -130,16 +129,26 @@ const Bridge: React.FC<BridgeProps> = ({ setSelectedCommand }) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt: `Bridge ${fromAmount} ${fromCoin.symbol} from ${fromCoin.network} to ${toCoin.network}`,
-          address: address,
-          chainId: "4012",
-          messages: [],
+          type: "bridge",
+          params: {
+            chain: fromCoin.network,
+            dest_chain: toCoin.network,
+            token1: fromCoin.symbol,
+            token2: toCoin.symbol,
+            amount: fromAmount,
+            address: address
+          },
+          messages: [] // Required by API but not used for bridge
         }),
       });
 
       const data = await response.json();
-      if (response.ok) {
-        toast.success("Bridge transaction initiated successfully!");
+      if (response.ok && data.success) {
+        toast.success("Bridge transaction initiated!");
+        // Open Layerswap explorer in new tab
+        if (data.data.explorerUrl) {
+          window.open(data.data.explorerUrl, '_blank');
+        }
         setSelectedCommand(null);
       } else {
         throw new Error(data.error || "Failed to initiate bridge");
