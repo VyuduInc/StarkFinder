@@ -202,7 +202,38 @@ export async function POST(request: NextRequest) {
       userId,
     });
 
-    // Process transaction based on type
+    // Process request based on type
+    if (type === "get_networks") {
+      try {
+        // For now return a success response since we're using static networks
+        return NextResponse.json({
+          success: true,
+          data: {
+            networks: [
+              {
+                id: "sepolia",
+                name: "Ethereum Sepolia",
+                internal_name: "sepolia",
+                status: "active"
+              },
+              {
+                id: "starknet_sepolia",
+                name: "StarkNet Sepolia",
+                internal_name: "starknet_sepolia",
+                status: "active"
+              }
+            ]
+          }
+        });
+      } catch (error: any) {
+        console.error("Error fetching networks:", error);
+        return NextResponse.json(
+          { success: false, error: error.message || "Failed to fetch networks" },
+          { status: 500 }
+        );
+      }
+    }
+
     if (type === "bridge") {
       try {
         // Validate required parameters
@@ -210,20 +241,20 @@ export async function POST(request: NextRequest) {
           throw new Error("Missing required parameters for bridge transaction");
         }
 
-        // Create transaction data
-        const transactionData: BrianTransactionData = {
-          type: "bridge",
-          bridge: {
-            sourceAddress: params.address,
-            destinationAddress: params.address,
-          }
-        };
+        // Format networks for Layerswap
+        const sourceNetwork = formatNetwork(params.chain);
+        const destinationNetwork = formatNetwork(params.dest_chain);
 
-        // Process the transaction
-        const result = await transactionProcessor.processTransaction(
-          transactionData,
-          params
-        );
+        // Create swap using Layerswap client
+        const swap = await layerswapClient.createSwap({
+          sourceNetwork,
+          destinationNetwork,
+          sourceToken: params.token1,
+          destinationToken: params.token2 || params.token1, // Use same token if destination not specified
+          amount: Number(params.amount),
+          sourceAddress: params.address,
+          destinationAddress: params.address // Using same address for source and destination
+        });
 
         // Store the transaction
         await storeTransaction(userId, "bridge", {
@@ -232,12 +263,16 @@ export async function POST(request: NextRequest) {
           amount: params.amount,
           token: params.token1,
           address: params.address,
-          status: "completed",
+          status: "pending",
+          swapId: swap.id
         });
 
         return NextResponse.json({
           success: true,
-          data: result
+          data: {
+            ...swap,
+            explorerUrl: `https://layerswap.io/track/${swap.id}`
+          }
         });
       } catch (error: any) {
         console.error("Bridge transaction error:", error);

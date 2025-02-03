@@ -6,21 +6,28 @@ import Deposit from "./deposit";
 import Withdraw from "./withdraw";
 import Bridge from "./bridge";
 
+interface CommandListProps {
+  onSelect?: (command: string) => void;
+}
+
 const commands = ["Transfer", "Swap", "Deposit", "Withdraw", "Bridge"];
 
-const CommandList = () => {
+const CommandList: React.FC<CommandListProps> = ({ onSelect }) => {
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
   const [showModal, setShowModal] = useState<boolean>(false);
 
   useEffect(() => {
     if (selectedCommand) {
       setShowModal(true);
+      if (onSelect) {
+        onSelect(selectedCommand.toLowerCase());
+      }
     }
-  }, [selectedCommand]);
+  }, [selectedCommand, onSelect]);
 
   return (
     <div>
-      {showModal && (
+      {showModal && !onSelect && (
         <div>
           {selectedCommand === "Swap" ? (
             <Swap setSelectedCommand={setSelectedCommand} />

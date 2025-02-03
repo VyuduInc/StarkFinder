@@ -23,6 +23,8 @@ import {
 import Link from "next/link";
 import { TransactionSuccess } from "@/components/TransactionSuccess";
 import CommandList from "@/components/ui/command";
+import dynamic from "next/dynamic";
+const Bridge = dynamic(() => import('@/components/ui/bridge'), { ssr: false });
 
 interface Message {
   role: string;
@@ -163,6 +165,7 @@ export default function TransactionPage() {
   const { address } = useAccount();
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [isInputClicked, setIsInputClicked] = React.useState<boolean>(false);
+  const [selectedCommand, setSelectedCommand] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (scrollRef.current) {
@@ -303,6 +306,9 @@ export default function TransactionPage() {
     }
   };
 
+  const handleCommand = (command: string) => {
+    setSelectedCommand(command);
+  };
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-gray-900 to-black text-white font-mono relative overflow-hidden">
@@ -456,6 +462,16 @@ export default function TransactionPage() {
           {isInputClicked && (
             <CommandList />
           )}
+          {/* Command List */}
+          <div className="p-4">
+            <CommandList onSelect={handleCommand} />
+          </div>
+
+          {/* Bridge Modal */}
+          {selectedCommand === 'bridge' && (
+            <Bridge setSelectedCommand={setSelectedCommand} />
+          )}
+
           {/* Input Area */}
           <div className="p-4 border-t border-white/20 bg-[#010101]">
             <div className="relative">
