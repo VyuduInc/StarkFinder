@@ -44,6 +44,10 @@ out/
 # TypeScript
 *.tsbuildinfo
 
+# Package locks
+package-lock.json
+**/package-lock.json
+
 # Test files
 /client/tests/
 /client/jest.config.js
