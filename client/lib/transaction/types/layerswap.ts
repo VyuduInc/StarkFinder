@@ -31,11 +31,12 @@ export interface LayerswapSuccessResponse {
 }
 
 export type LayerswapSwapStatus = 
-  | 'pending'
-  | 'processing'
-  | 'completed'
-  | 'failed'
-  | 'refunded';
+  | 'pending'      // Initial state, waiting for deposit
+  | 'processing'   // Deposit received, executing bridge
+  | 'completed'    // Bridge successful
+  | 'failed'       // Bridge failed
+  | 'refunded'     // Funds returned to source
+  | 'cancelled';   // User cancelled the transaction
 
 export interface LayerswapError {
   code: string;
@@ -57,12 +58,15 @@ export interface LayerswapSwapRequest {
   amount: number;
   source_address: string;
   destination_address: string;
+  refund_address?: string;
+  gas_price?: string;  // Optional gas price in wei
+  slippage?: number;   // Optional slippage tolerance in percentage
 }
 
 export interface LayerswapSwapResponse {
   id: string;
   created_date: string;
-  status: string;
+  status: LayerswapSwapStatus;
   source_network: string;
   destination_network: string;
   source_token: string;
@@ -70,8 +74,20 @@ export interface LayerswapSwapResponse {
   amount: number;
   source_address: string;
   destination_address: string;
+  refund_address?: string;
   transaction_id?: string;
-  error?: string;
+  source_transaction_id?: string;
+  destination_transaction_id?: string;
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, any>;
+  };
+  estimated_completion_time?: string;
+  fee?: {
+    amount: number;
+    token: string;
+  };
 }
 
 export interface LayerswapNetwork {

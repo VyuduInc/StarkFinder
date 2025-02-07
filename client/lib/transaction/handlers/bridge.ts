@@ -19,6 +19,33 @@ export class BridgeHandler extends BaseTransactionHandler {
     zksync: "zksync_mainnet",
   } as const;
 
+  private readonly ADDRESS_FORMATS: Record<string, RegExp> = {
+    starknet_mainnet: /^0x[a-fA-F0-9]{1,64}$/,
+    ethereum_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    base_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    arbitrum_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    optimism_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    polygon_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    zkera_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    linea_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    scroll_mainnet: /^0x[a-fA-F0-9]{40}$/,
+    zksync_mainnet: /^0x[a-fA-F0-9]{40}$/,
+  } as const;
+
+  private readonly STATUS_MESSAGES: Record<string, string> = {
+    pending: 'Transaction is pending. Waiting for deposit...',
+    processing: 'Processing your bridge transaction...',
+    completed: 'Bridge transaction completed successfully!',
+    failed: 'Bridge transaction failed. Please check the error details.',
+    refunded: 'Transaction was refunded to your source address.',
+  } as const;
+
+  private readonly MIN_AMOUNTS: Record<string, number> = {
+    ETH: 0.001,
+    USDC: 1,
+    USDT: 1,
+  } as const;
+
   private layerswapClient: LayerswapClient;
   private availableRoutes: LayerswapRoutes | null = null;
 
@@ -69,21 +96,27 @@ export class BridgeHandler extends BaseTransactionHandler {
     }
   }
 
-  private validateAddresses(sourceAddress?: string, destinationAddress?: string): void {
+  private validateAddresses(sourceNetwork: string, destinationNetwork: string, sourceAddress?: string, destinationAddress?: string): void {
     if (!sourceAddress || !destinationAddress) {
       throw new Error('Source and destination addresses are required');
     }
 
-    const addressRegex = /^0x[a-fA-F0-9]{40,64}$/;
-    if (!addressRegex.test(sourceAddress)) {
-      throw new Error('Invalid source address format');
+    const sourceFormat = this.ADDRESS_FORMATS[sourceNetwork];
+    const destFormat = this.ADDRESS_FORMATS[destinationNetwork];
+
+    if (!sourceFormat || !destFormat) {
+      throw new Error(`Unsupported network(s): ${!sourceFormat ? sourceNetwork : destinationNetwork}`);
     }
-    if (!addressRegex.test(destinationAddress)) {
-      throw new Error('Invalid destination address format');
+
+    if (!sourceFormat.test(sourceAddress)) {
+      throw new Error(`Invalid source address format for ${sourceNetwork}`);
+    }
+    if (!destFormat.test(destinationAddress)) {
+      throw new Error(`Invalid destination address format for ${destinationNetwork}`);
     }
   }
 
-  private validateAmount(amount?: string | number): number {
+  private validateAmount(amount: string | number | undefined, token: string): number {
     if (!amount) {
       throw new Error('Amount is required');
     }
@@ -93,7 +126,45 @@ export class BridgeHandler extends BaseTransactionHandler {
       throw new Error('Amount must be a positive number');
     }
 
+    const minAmount = this.MIN_AMOUNTS[token.toUpperCase()] || 0;
+    if (numAmount < minAmount) {
+      throw new Error(`Amount must be at least ${minAmount} ${token}`);
+    }
+
     return numAmount;
+  }
+
+  private async monitorTransaction(swapId: string): Promise<TransactionStep[]> {
+    const MAX_ATTEMPTS = 30;
+    const POLL_INTERVAL = 10000; // 10 seconds
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const response = await this.layerswapClient.getSwapStatus(swapId);
+      const status = response.status.toLowerCase();
+      const message = this.STATUS_MESSAGES[status] || 'Unknown status';
+
+      if (['completed', 'failed', 'refunded'].includes(status)) {
+        return [{
+          type: 'bridge',
+          status: status === 'completed' ? 'success' : 'error',
+          message,
+          data: response,
+          url: `https://www.layerswap.io/track/${response.id}`,
+        }];
+      }
+
+      // If still processing, wait before next attempt
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+    }
+
+    // If we reach here, transaction is taking too long
+    return [{
+      type: 'bridge',
+      status: 'warning',
+      message: 'Transaction is taking longer than expected. Please check the status URL.',
+      data: { swapId },
+      url: `https://www.layerswap.io/track/${swapId}`,
+    }];
   }
 
   async processSteps(
@@ -120,13 +191,14 @@ export class BridgeHandler extends BaseTransactionHandler {
       // Extract and validate addresses
       const sourceAddress = data.bridge?.sourceAddress || params?.address;
       const destinationAddress = data.bridge?.destinationAddress || params?.address;
-      this.validateAddresses(sourceAddress, destinationAddress);
+      const refundAddress = data.bridge?.refundAddress || sourceAddress;
+      this.validateAddresses(sourceNetwork, destinationNetwork, sourceAddress, destinationAddress);
 
       // Validate amount
-      const amount = this.validateAmount(params?.amount);
+      const amount = this.validateAmount(params?.amount, sourceToken);
 
       // Create swap request
-      const response: LayerswapSwapResponse = await this.layerswapClient.createSwap({
+      const response = await this.layerswapClient.createSwap({
         sourceNetwork,
         destinationNetwork,
         sourceToken,
@@ -134,20 +206,19 @@ export class BridgeHandler extends BaseTransactionHandler {
         amount,
         sourceAddress,
         destinationAddress,
+        refundAddress,
       });
 
-      return [
-        {
-          type: 'bridge',
-          status: 'success',
-          message: `Bridge transaction created from ${sourceNetwork} to ${destinationNetwork}`,
-          data: response,
-          url: `https://www.layerswap.io/track/${response.id}`,
-        },
-      ];
+      // Start monitoring the transaction
+      return this.monitorTransaction(response.id);
     } catch (error: any) {
       console.error('Bridge error:', error);
-      throw error;
+      return [{
+        type: 'bridge',
+        status: 'error',
+        message: error.message || 'Failed to process bridge transaction',
+        data: error,
+      }];
     }
   }
 }
