@@ -245,15 +245,26 @@ export async function POST(request: NextRequest) {
         const sourceNetwork = formatNetwork(params.chain);
         const destinationNetwork = formatNetwork(params.dest_chain);
 
+        // Get available tokens for the route
+        const availableTokens = await getAvailableTokens(sourceNetwork, destinationNetwork);
+        
+        // Validate tokens
+        const sourceToken = params.token1?.toUpperCase();
+        const destToken = (params.token2 || params.token1)?.toUpperCase();
+        
+        if (!availableTokens.includes(sourceToken)) {
+          throw new Error(`Token ${sourceToken} not available for ${params.chain}`);
+        }
+
         // Create swap using Layerswap client
         const swap = await layerswapClient.createSwap({
           sourceNetwork,
           destinationNetwork,
-          sourceToken: params.token1,
-          destinationToken: params.token2 || params.token1, // Use same token if destination not specified
+          sourceToken,
+          destinationToken: destToken,
           amount: Number(params.amount),
           sourceAddress: params.address,
-          destinationAddress: params.address // Using same address for source and destination
+          destinationAddress: params.destinationAddress || params.address
         });
 
         // Store the transaction
@@ -263,7 +274,7 @@ export async function POST(request: NextRequest) {
           amount: params.amount,
           token: params.token1,
           address: params.address,
-          status: "pending",
+          status: swap.status,
           swapId: swap.id
         });
 
@@ -279,7 +290,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { 
             success: false, 
-            error: error.message || "Failed to process bridge transaction" 
+            error: error.message || "Failed to process bridge transaction"
           },
           { status: 400 }
         );
