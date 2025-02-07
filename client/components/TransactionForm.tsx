@@ -17,9 +17,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAccount } from "@starknet-react/core";
+import { 
+  NETWORK_CONFIGS, 
+  SupportedNetwork, 
+  SupportedAsset 
+} from '@/lib/layerswap/types';
 
 interface TransactionFormProps {
   onSubmit: (result: any) => void;
+  onSuccess?: () => void;
+  onError?: (error: string) => void;
 }
 
 type FormData = {
@@ -28,6 +35,11 @@ type FormData = {
   recipient: string;
   protocol: string;
   toToken: string;
+  fromNetwork: SupportedNetwork;
+  toNetwork: SupportedNetwork;
+  asset: SupportedAsset;
+  destinationAddress: string;
+  refuel: boolean;
 };
 
 type ActionType = 'swap' | 'transfer' | 'deposit' | 'withdraw' | 'bridge';
@@ -37,17 +49,22 @@ const actionFields: Record<ActionType, (keyof FormData)[]> = {
   transfer: ['token', 'amount', 'recipient'],
   deposit: ['token', 'amount', 'protocol'],
   withdraw: ['protocol', 'token', 'amount'],
-  bridge: ['token', 'amount']
+  bridge: ['fromNetwork', 'toNetwork', 'asset', 'amount', 'destinationAddress', 'refuel']
 };
 
-export const TransactionForm: React.FC<TransactionFormProps> = ({ onSubmit }) => {
+export const TransactionForm: React.FC<TransactionFormProps> = ({ onSubmit, onSuccess, onError }) => {
   const [action, setAction] = useState<ActionType | ''>('');
   const [formData, setFormData] = useState<FormData>({
     token: "",
     amount: "",
     recipient: "",
     protocol: "",
-    toToken: ""
+    toToken: "",
+    fromNetwork: 'starknet',
+    toNetwork: 'starknet',
+    asset: 'ETH',
+    destinationAddress: "",
+    refuel: false
   });
   const [isLoading, setIsLoading] = useState(false);
   const { address } = useAccount();
@@ -56,29 +73,31 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({ onSubmit }) =>
     e.preventDefault();
     setIsLoading(true);
     
-    // Construct prompt based on action type and form data
-    let prompt = "";
-    switch (action) {
-      case "swap":
-        prompt = `Swap ${formData.amount} ${formData.token} to ${formData.toToken}`;
-        break;
-      case "transfer":
-        prompt = `Transfer ${formData.amount} ${formData.token} to ${formData.recipient}`;
-        break;
-      case "deposit":
-        prompt = `Deposit ${formData.amount} ${formData.token} into ${formData.protocol}`;
-        break;
-      case "withdraw":
-        prompt = `Withdraw ${formData.amount} ${formData.token} from ${formData.protocol}`;
-        break;
-      case "bridge":
-        prompt = `Bridge ${formData.amount} ${formData.token} to Ethereum`;
-        break;
-      default:
-        throw new Error('Invalid action type');
-    }
-
     try {
+      if (action === 'bridge') {
+        await handleBridge(formData);
+        return;
+      }
+
+      // Construct prompt based on action type and form data
+      let prompt = "";
+      switch (action) {
+        case "swap":
+          prompt = `Swap ${formData.amount} ${formData.token} to ${formData.toToken}`;
+          break;
+        case "transfer":
+          prompt = `Transfer ${formData.amount} ${formData.token} to ${formData.recipient}`;
+          break;
+        case "deposit":
+          prompt = `Deposit ${formData.amount} ${formData.token} into ${formData.protocol}`;
+          break;
+        case "withdraw":
+          prompt = `Withdraw ${formData.amount} ${formData.token} from ${formData.protocol}`;
+          break;
+        default:
+          throw new Error('Invalid action type');
+      }
+
       const response = await fetch('/api/transactions', {
         method: 'POST',
         headers: {
@@ -103,14 +122,184 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({ onSubmit }) =>
       }
     } catch (error) {
       console.error('Error:', error);
-      // You might want to add error handling UI here
+      onError?.(error instanceof Error ? error.message : 'Transaction failed');
     } finally {
       setIsLoading(false);
     }
   };
 
+  const validateBridgeForm = () => {
+    if (!formData.fromNetwork) {
+      throw new Error('Please select source network');
+    }
+    if (!formData.toNetwork) {
+      throw new Error('Please select destination network');
+    }
+    if (formData.fromNetwork === formData.toNetwork) {
+      throw new Error('Source and destination networks must be different');
+    }
+    if (!formData.asset) {
+      throw new Error('Please select an asset');
+    }
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+      throw new Error('Please enter a valid amount');
+    }
+    if (!formData.destinationAddress) {
+      throw new Error('Please enter a destination address');
+    }
+  };
+
+  const handleBridge = async (formData: FormData) => {
+    setIsLoading(true);
+    try {
+      validateBridgeForm();
+      
+      const response = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'bridge',
+          from_network: formData.fromNetwork,
+          to_network: formData.toNetwork,
+          asset: formData.asset,
+          amount: formData.amount,
+          destination_address: formData.destinationAddress,
+          refuel: formData.refuel
+        })
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Bridge failed');
+      }
+
+      if (data.redirectUrl) {
+        window.location.href = data.redirectUrl;
+      }
+
+      onSuccess?.();
+    } catch (error) {
+      console.error('Bridge error:', error);
+      onError?.(error instanceof Error ? error.message : 'Bridge failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const renderBridgeFields = () => {
+    const fromNetworkAssets = NETWORK_CONFIGS.find(
+      n => n.name === formData.fromNetwork
+    )?.assets || [];
+
+    return (
+      <>
+        <div className="space-y-2">
+          <label className="text-sm text-white/80">From Network</label>
+          <Select
+            value={formData.fromNetwork}
+            onValueChange={(value: SupportedNetwork) => 
+              setFormData({ ...formData, fromNetwork: value })
+            }
+          >
+            <SelectTrigger className="bg-white/5 border border-white/20 text-white">
+              <SelectValue placeholder="Select network" />
+            </SelectTrigger>
+            <SelectContent className="bg-gray-900 border border-white/20">
+              {NETWORK_CONFIGS.map(network => (
+                <SelectItem key={network.name} value={network.name}>
+                  {network.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm text-white/80">To Network</label>
+          <Select
+            value={formData.toNetwork}
+            onValueChange={(value: SupportedNetwork) => 
+              setFormData({ ...formData, toNetwork: value })
+            }
+          >
+            <SelectTrigger className="bg-white/5 border border-white/20 text-white">
+              <SelectValue placeholder="Select network" />
+            </SelectTrigger>
+            <SelectContent className="bg-gray-900 border border-white/20">
+              {NETWORK_CONFIGS.map(network => (
+                <SelectItem key={network.name} value={network.name}>
+                  {network.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm text-white/80">Asset</label>
+          <Select
+            value={formData.asset}
+            onValueChange={(value: SupportedAsset) => 
+              setFormData({ ...formData, asset: value })
+            }
+          >
+            <SelectTrigger className="bg-white/5 border border-white/20 text-white">
+              <SelectValue placeholder="Select asset" />
+            </SelectTrigger>
+            <SelectContent className="bg-gray-900 border border-white/20">
+              {fromNetworkAssets.map(asset => (
+                <SelectItem key={asset} value={asset}>
+                  {asset}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm text-white/80">Amount</label>
+          <Input
+            type="number"
+            value={formData.amount}
+            onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+            className="bg-white/5 border border-white/20 text-white"
+            placeholder="Enter amount"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm text-white/80">Destination Address</label>
+          <Input
+            type="text"
+            value={formData.destinationAddress}
+            onChange={(e) => setFormData({ ...formData, destinationAddress: e.target.value })}
+            className="bg-white/5 border border-white/20 text-white"
+            placeholder="Enter destination address"
+          />
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <input
+            type="checkbox"
+            checked={formData.refuel}
+            onChange={(e) => setFormData({ ...formData, refuel: e.target.checked })}
+            className="bg-white/5 border border-white/20"
+          />
+          <label className="text-sm text-white/80">Add gas to destination (Refuel)</label>
+        </div>
+      </>
+    );
+  };
+
   const renderFields = () => {
     if (!action) return null;
+
+    if (action === 'bridge') {
+      return renderBridgeFields();
+    }
 
     const fields = actionFields[action];
     return fields.map((field) => (
@@ -147,7 +336,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({ onSubmit }) =>
                   amount: "",
                   recipient: "",
                   protocol: "",
-                  toToken: ""
+                  toToken: "",
+                  fromNetwork: 'starknet',
+                  toNetwork: 'starknet',
+                  asset: 'ETH',
+                  destinationAddress: "",
+                  refuel: false
                 });
               }}
             >
